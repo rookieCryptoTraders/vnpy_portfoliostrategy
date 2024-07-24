@@ -115,6 +115,11 @@ class StrategyEngine(BaseEngine):
         data: list[BarData] = self.datafeed.query_bar_history(req, self.write_log)
         return data
 
+    def query_latest_factor_from_database(self, symbol: str, exchange: Exchange) -> dict:
+        """通过数据库获取最新因子数据"""
+        data: dict = self.database.query_latest_factor_data(symbol, exchange)
+        return data
+
     def process_tick_event(self, event: Event) -> None:
         """行情数据推送"""
         tick: TickData = event.data
