@@ -8,9 +8,9 @@ from typing import Type, Callable, Optional
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 
-from vnpy.event import Event, EventEngine
-from vnpy.trader.engine import BaseEngine, MainEngine
-from vnpy.trader.object import (
+from vnpy.vnpy.event import Event, EventEngine
+from vnpy.vnpy.trader.engine import BaseEngine, MainEngine
+from vnpy.vnpy.trader.object import (
     OrderRequest,
     CancelRequest,
     SubscribeRequest,
@@ -20,23 +20,23 @@ from vnpy.trader.object import (
     OrderData,
     TradeData,
     BarData,
-    ContractData
+    ContractData, FactorData
 )
-from vnpy.trader.event import (
+from vnpy.vnpy.trader.event import (
     EVENT_TICK,
     EVENT_ORDER,
     EVENT_TRADE
 )
-from vnpy.trader.constant import (
+from vnpy.vnpy.trader.constant import (
     Direction,
     OrderType,
     Interval,
     Exchange,
     Offset
 )
-from vnpy.trader.utility import load_json, save_json, extract_vt_symbol, round_to
-from vnpy.trader.datafeed import BaseDatafeed, get_datafeed
-from vnpy.trader.database import BaseDatabase, get_database, DB_TZ
+from vnpy.vnpy.trader.utility import load_json, save_json, extract_vt_symbol, round_to, bn_exection_report2trade_data
+from vnpy.vnpy.trader.datafeed import BaseDatafeed, get_datafeed
+from vnpy.vnpy.trader.database import BaseDatabase, get_database, DB_TZ
 
 from .base import (
     APP_NAME,
@@ -66,6 +66,7 @@ class StrategyEngine(BaseEngine):
         self.strategies: dict[str, StrategyTemplate] = {}
 
         self.symbol_strategy_map: dict[str, list[StrategyTemplate]] = defaultdict(list)
+        self.factor_strategy_map: dict[str, list[StrategyTemplate]] = defaultdict(list)
         self.orderid_strategy_map: dict[str, StrategyTemplate] = {}
 
         self.init_executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1)
@@ -94,6 +95,7 @@ class StrategyEngine(BaseEngine):
         self.event_engine.register(EVENT_TICK, self.process_tick_event)
         self.event_engine.register(EVENT_ORDER, self.process_order_event)
         self.event_engine.register(EVENT_TRADE, self.process_trade_event)
+        self.event_engine.register(EVENT_FACTOR, self.process_factor_event)
 
     def init_datafeed(self) -> None:
         """初始化数据服务"""
@@ -115,10 +117,17 @@ class StrategyEngine(BaseEngine):
         data: list[BarData] = self.datafeed.query_bar_history(req, self.write_log)
         return data
 
-    def query_latest_factor_from_database(self, symbol: str, exchange: Exchange) -> dict:
-        """通过数据库获取最新因子数据"""
-        data: dict = self.database.query_latest_factor_data(symbol, exchange)
-        return data
+    def process_factor_event(self, event: Event) -> None:
+        """因子数据推送"""
+        factor: FactorData = event.data
+
+        strategies: list = self.factor_strategy_map[factor.factor_name]
+        if not strategies:
+            return
+
+        for strategy in strategies:
+            if strategy.inited:
+                self.call_strategy_func(strategy, strategy.on_factor, factor)
 
     def process_tick_event(self, event: Event) -> None:
         """行情数据推送"""
@@ -144,7 +153,9 @@ class StrategyEngine(BaseEngine):
 
     def process_trade_event(self, event: Event) -> None:
         """成交数据推送"""
-        trade: TradeData = event.data
+        execution_report: dict = event.data
+
+        trade: TradeData = bn_exection_report2trade_data(execution_report)
 
         # 过滤重复的成交推送
         if trade.vt_tradeid in self.vt_tradeids:
