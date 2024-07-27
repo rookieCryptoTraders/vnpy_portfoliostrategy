@@ -3,9 +3,9 @@ from copy import copy
 from typing import TYPE_CHECKING, Optional
 from collections import defaultdict
 
-from vnpy.vnpy.trader.constant import Interval, Direction, Offset
-from vnpy.vnpy.trader.object import BarData, TickData, OrderData, TradeData, FactorData
-from vnpy.vnpy.trader.utility import virtual, bn_exection_report2trade_data
+from vnpy.trader.constant import Interval, Direction, Offset
+from vnpy.trader.object import BarData, TickData, OrderData, TradeData, FactorData
+from vnpy.trader.utility import virtual, bn_exection_report2trade_data
 
 from .base import EngineType
 
@@ -115,16 +115,19 @@ class StrategyTemplate(ABC):
     @virtual
     def on_init(self) -> None:
         """策略初始化回调"""
+        self.inited = True
         pass
 
     @virtual
     def on_start(self) -> None:
         """策略启动回调"""
+        self.trading = True
         pass
 
     @virtual
     def on_stop(self) -> None:
         """策略停止回调"""
+        self.trading = False
         pass
 
     @virtual
@@ -138,18 +141,19 @@ class StrategyTemplate(ABC):
         pass
 
     def on_factor(self, factor: FactorData) -> None:
-        """因子推送回调"""
-        check_result: bool = self.update_factor(factor)
-        if check_result:
-            # get current portfolio value
-            latest_price: dict[str, float] = self.get_latest_price()
-            self.get_portfolio_value(latest_price)
-            # 因子数据全部推送完成后，执行策略逻辑
-            target_weight: dict[str, float] = self.on_factor_ready()
-            for ticker, weight in target_weight.items():
-                self.set_target(ticker, weight*self.portfolio_value/latest_price[ticker])
-            # init check list
-            self.init_checklist()
+        if self.trading:
+            """因子推送回调"""
+            check_result: bool = self.update_factor(factor)
+            if check_result:
+                # get current portfolio value
+                latest_price: dict[str, float] = self.get_latest_price()
+                self.get_portfolio_value(latest_price)
+                # 因子数据全部推送完成后，执行策略逻辑
+                target_weight: dict[str, float] = self.on_factor_ready()
+                for ticker, weight in target_weight.items():
+                    self.set_target(ticker, weight*self.portfolio_value/latest_price[ticker])
+                # init check list
+                self.init_checklist()
         return
 
     @virtual
