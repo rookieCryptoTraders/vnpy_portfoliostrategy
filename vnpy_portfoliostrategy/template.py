@@ -146,12 +146,13 @@ class StrategyTemplate(ABC):
             check_result: bool = self.update_factor(factor)
             if check_result:
                 # get current portfolio value
-                latest_price: dict[str, float] = self.get_latest_price()
-                self.get_portfolio_value(latest_price)
+                tickers_latest_price: dict[str, float] = self.get_latest_price()
+                self.get_portfolio_value(tickers_latest_price)
                 # 因子数据全部推送完成后，执行策略逻辑
                 target_weight: dict[str, float] = self.on_factor_ready()
                 for ticker, weight in target_weight.items():
-                    self.set_target(ticker, weight*self.portfolio_value/latest_price[ticker])
+                    self.set_target(ticker, weight*self.portfolio_value/tickers_latest_price[ticker])
+                self.rebalance_portfolio(tickers_latest_price)
                 # init check list
                 self.init_checklist()
         return
@@ -246,12 +247,12 @@ class StrategyTemplate(ABC):
         """设置目标仓位"""
         self.target_data[vt_symbol] = target
 
-    def rebalance_portfolio(self, bars: dict[str, BarData]) -> None:
+    def rebalance_portfolio(self, tickers_latest_price) -> None:
         """基于目标执行调仓交易"""
         self.cancel_all()
 
         # 只发出当前K线切片有行情的合约的委托
-        for vt_symbol, bar in bars.items():
+        for vt_symbol, latest_price in tickers_latest_price.items():
             # 计算仓差
             target: float = self.get_target(vt_symbol)
             pos: float = self.get_pos(vt_symbol)
@@ -260,11 +261,7 @@ class StrategyTemplate(ABC):
             # 多头
             if diff > 0:
                 # 计算多头委托价
-                order_price: float = self.calculate_price(
-                    vt_symbol,
-                    Direction.LONG,
-                    bar.close_price
-                )
+                order_price: float = latest_price
 
                 # 计算买平和买开数量
                 cover_volume: float = 0
@@ -285,11 +282,7 @@ class StrategyTemplate(ABC):
             # 空头
             elif diff < 0:
                 # 计算空头委托价
-                order_price: float = self.calculate_price(
-                    vt_symbol,
-                    Direction.SHORT,
-                    bar.close_price
-                )
+                order_price: float = latest_price
 
                 # 计算卖平和卖开数量
                 sell_volume: float = 0
@@ -308,16 +301,16 @@ class StrategyTemplate(ABC):
                 if short_volume:
                     self.short(vt_symbol, order_price, short_volume)
 
-    def get_portfolio_value(self, latest_price) -> None:
+    def get_portfolio_value(self, tickers_latest_price) -> None:
         curr_pos = self.pos_data
         curr_portfolio_value = 0
         for vt_symbol in curr_pos.keys():
-            curr_portfolio_value += curr_pos[vt_symbol] * latest_price[vt_symbol]
+            curr_portfolio_value += curr_pos[vt_symbol] * tickers_latest_price[vt_symbol]
         self.portfolio_value = curr_portfolio_value
 
     def get_latest_price(self) -> dict[str, float]:
         """查询当前价格"""
-        return self.strategy_engine.get_latest_price(self)
+        return self.strategy_engine.get_latest_bar(self)
 
     @virtual
     def calculate_price(

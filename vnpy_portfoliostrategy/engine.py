@@ -633,3 +633,13 @@ class StrategyEngine(BaseEngine):
             subject: str = _("组合策略引擎")
 
         self.main_engine.send_email(subject, msg)
+
+    def get_latest_bar(self, strategy: StrategyTemplate) -> dict[str, BarData]:
+        """获取最新价格"""
+        tickers: list = strategy.vt_symbols
+        exchange: Exchange = Exchange.BINANCE
+        interval: Interval = Interval.MINUTE
+        start = None
+        end = None
+        bars: list[BarData] = self.main_engine.load_bar_datas(tickers, exchange, interval, start, end)
+        return dict(zip([tickers], [bars]))
