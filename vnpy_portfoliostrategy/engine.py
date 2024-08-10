@@ -25,7 +25,7 @@ from vnpy.trader.object import (
 from vnpy.trader.event import (
     EVENT_TICK,
     EVENT_ORDER,
-    EVENT_TRADE
+    EVENT_TRADE, EVENT_FACTOR
 )
 from vnpy.trader.constant import (
     Direction,
@@ -34,7 +34,7 @@ from vnpy.trader.constant import (
     Exchange,
     Offset
 )
-from vnpy.trader.utility import load_json, save_json, extract_vt_symbol, round_to, bn_exection_report2trade_data
+from vnpy.trader.utility import load_json, save_json, extract_vt_symbol, round_to
 from vnpy.trader.datafeed import BaseDatafeed, get_datafeed
 from vnpy.trader.database import BaseDatabase, get_database, DB_TZ
 
@@ -74,8 +74,8 @@ class StrategyEngine(BaseEngine):
         self.vt_tradeids: set[str] = set()
 
         # 数据库和数据服务
-        #self.database: BaseDatabase = get_database()
-        #self.datafeed: BaseDatafeed = get_datafeed()
+        self.database: BaseDatabase = get_database()
+        self.datafeed: BaseDatafeed = get_datafeed()
 
     def init_engine(self) -> None:
         """初始化引擎"""
@@ -119,6 +119,7 @@ class StrategyEngine(BaseEngine):
 
     def process_factor_event(self, event: Event) -> None:
         """因子数据推送"""
+        # todo 因子数据推送
         factor: FactorData = event.data
 
         strategies: list = self.factor_strategy_map[factor.factor_name]
@@ -153,9 +154,7 @@ class StrategyEngine(BaseEngine):
 
     def process_trade_event(self, event: Event) -> None:
         """成交数据推送"""
-        execution_report: dict = event.data
-
-        trade: TradeData = bn_exection_report2trade_data(execution_report)
+        trade: TradeData = event.data
 
         # 过滤重复的成交推送
         if trade.vt_tradeid in self.vt_tradeids:
@@ -633,13 +632,3 @@ class StrategyEngine(BaseEngine):
             subject: str = _("组合策略引擎")
 
         self.main_engine.send_email(subject, msg)
-
-    def get_latest_bar(self, strategy: StrategyTemplate) -> dict[str, BarData]:
-        """获取最新价格"""
-        tickers: list = strategy.vt_symbols
-        exchange: Exchange = Exchange.BINANCE
-        interval: Interval = Interval.MINUTE
-        start = None
-        end = None
-        bars: list[BarData] = self.main_engine.load_bar_datas(tickers, exchange, interval, start, end)
-        return dict(zip([tickers], [bars]))

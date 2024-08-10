@@ -141,25 +141,30 @@ class StrategyTemplate(ABC):
         pass
 
     def on_factor(self, factor: FactorData) -> None:
+        # todo 优化因子推送逻辑
         if self.trading:
             """因子推送回调"""
             check_result: bool = self.update_factor(factor)
             if check_result:
-                # get current portfolio value
-                tickers_latest_price: dict[str, float] = self.get_latest_price()
-                self.get_portfolio_value(tickers_latest_price)
-                # 因子数据全部推送完成后，执行策略逻辑
-                target_weight: dict[str, float] = self.on_factor_ready()
-                for ticker, weight in target_weight.items():
-                    self.set_target(ticker, weight*self.portfolio_value/tickers_latest_price[ticker])
-                self.rebalance_portfolio(tickers_latest_price)
-                # init check list
+                self.on_factor_ready()
                 self.init_checklist()
         return
+
+    def update_factor(self, factor: FactorData) -> bool:
+        """因子数据更新"""
+        # todo 优化因子数据更新逻辑
+        if factor.factor_name in self.factors:
+            setattr(self, factor.factor_name, factor.value)
+            self.checklist[factor.factor_name] = True
+        else:
+            self.write_log(f"因子{factor.factor_name}不在策略因子列表中")
+
+        return all(self.checklist.values())
 
     @virtual
     def on_factor_ready(self) -> dict[str, float]:
         """因子推送完成回调"""
+        # todo 优化因子推送完成逻辑
         pass
 
     def update_trade(self, trade: TradeData) -> None:
@@ -168,16 +173,6 @@ class StrategyTemplate(ABC):
             self.pos_data[trade.vt_symbol] += trade.volume
         else:
             self.pos_data[trade.vt_symbol] -= trade.volume
-
-    def update_factor(self, factor: FactorData) -> bool:
-        """因子数据更新"""
-        if factor.factor_name in self.factors:
-            setattr(self, factor.factor_name, factor.value)
-            self.checklist[factor.factor_name] = True
-        else:
-            self.write_log(f"因子{factor.factor_name}不在策略因子列表中")
-
-        return all(self.checklist.values())
 
     def update_order(self, order: OrderData) -> None:
         """委托数据更新"""
@@ -247,12 +242,12 @@ class StrategyTemplate(ABC):
         """设置目标仓位"""
         self.target_data[vt_symbol] = target
 
-    def rebalance_portfolio(self, tickers_latest_price) -> None:
+    def rebalance_portfolio(self, bars: dict[str, BarData]) -> None:
         """基于目标执行调仓交易"""
         self.cancel_all()
 
         # 只发出当前K线切片有行情的合约的委托
-        for vt_symbol, latest_price in tickers_latest_price.items():
+        for vt_symbol, bar in bars.items():
             # 计算仓差
             target: float = self.get_target(vt_symbol)
             pos: float = self.get_pos(vt_symbol)
@@ -261,7 +256,11 @@ class StrategyTemplate(ABC):
             # 多头
             if diff > 0:
                 # 计算多头委托价
-                order_price: float = latest_price
+                order_price: float = self.calculate_price(
+                    vt_symbol,
+                    Direction.LONG,
+                    bar.close_price
+                )
 
                 # 计算买平和买开数量
                 cover_volume: float = 0
@@ -282,7 +281,11 @@ class StrategyTemplate(ABC):
             # 空头
             elif diff < 0:
                 # 计算空头委托价
-                order_price: float = latest_price
+                order_price: float = self.calculate_price(
+                    vt_symbol,
+                    Direction.SHORT,
+                    bar.close_price
+                )
 
                 # 计算卖平和卖开数量
                 sell_volume: float = 0
@@ -301,17 +304,6 @@ class StrategyTemplate(ABC):
                 if short_volume:
                     self.short(vt_symbol, order_price, short_volume)
 
-    def get_portfolio_value(self, tickers_latest_price) -> None:
-        curr_pos = self.pos_data
-        curr_portfolio_value = 0
-        for vt_symbol in curr_pos.keys():
-            curr_portfolio_value += curr_pos[vt_symbol] * tickers_latest_price[vt_symbol]
-        self.portfolio_value = curr_portfolio_value
-
-    def get_latest_price(self) -> dict[str, float]:
-        """查询当前价格"""
-        return self.strategy_engine.get_latest_bar(self)
-
     @virtual
     def calculate_price(
             self,
@@ -326,7 +318,7 @@ class StrategyTemplate(ABC):
         """查询委托数据"""
         return self.orders.get(vt_orderid, None)
 
-    def get_all_active_orderids(self) -> list[OrderData]:
+    def get_all_active_orderids(self) -> list[str]:
         """获取全部活动状态的委托号"""
         return list(self.active_orderids)
 
@@ -342,7 +334,7 @@ class StrategyTemplate(ABC):
         """查询合约最小价格跳动"""
         return self.strategy_engine.get_pricetick(self, vt_symbol)
 
-    def get_size(self, vt_symbol: str) -> int:
+    def get_size(self, vt_symbol: str) -> float | None:
         """查询合约乘数"""
         return self.strategy_engine.get_size(self, vt_symbol)
 
