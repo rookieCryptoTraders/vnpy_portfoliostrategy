@@ -632,3 +632,6 @@ class StrategyEngine(BaseEngine):
             subject: str = _("组合策略引擎")
 
         self.main_engine.send_email(subject, msg)
+
+    def get_tick(self, vt_symbol) -> TickData:
+        return self.main_engine.get_tick(vt_symbol)

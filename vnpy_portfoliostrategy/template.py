@@ -44,6 +44,9 @@ class StrategyTemplate(ABC):
         self.pos_data: dict[str, float] = defaultdict(float)  # 实际持仓
         self.target_data: dict[str, float] = defaultdict(float)  # 目标持仓
 
+        #kline数据字典
+        self.bars: dict[str, BarData] = defaultdict(BarData)
+
         # 委托缓存容器
         self.orders: dict[str, OrderData] = {}
         self.active_orderids: set[str] = set()
@@ -146,7 +149,9 @@ class StrategyTemplate(ABC):
             """因子推送回调"""
             check_result: bool = self.update_factor(factor)
             if check_result:
+                bars = self.update_bar()
                 self.on_factor_ready()
+                self.rebalance_portfolio(bars)
                 self.init_checklist()
         return
 
@@ -161,11 +166,24 @@ class StrategyTemplate(ABC):
 
         return all(self.checklist.values())
 
-    @virtual
     def on_factor_ready(self) -> dict[str, float]:
         """因子推送完成回调"""
-        # todo 优化因子推送完成逻辑
+        # todo 优化因子推送完成逻辑, update target positions
         pass
+
+    def update_bar(self) -> dict[str, BarData]:
+        for vt_symbol in self.vt_symbols:
+            tick: TickData = self.strategy_engine.get_tick(vt_symbol)
+            bar: BarData = BarData(
+                symbol=tick.symbol,
+                exchange=tick.exchange,
+                datetime=tick.datetime,
+                interval=Interval.MINUTE,
+                close_price=tick.last_price,
+                gateway_name=tick.gateway_name
+            )
+            self.bars[vt_symbol] = bar
+        return self.bars
 
     def update_trade(self, trade: TradeData) -> None:
         """成交数据更新"""
