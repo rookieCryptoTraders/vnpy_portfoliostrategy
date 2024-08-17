@@ -27,7 +27,7 @@ import importlib_metadata
 from vnpy.trader.app import BaseApp
 from vnpy.trader.constant import Direction
 from vnpy.trader.object import TickData, BarData, TradeData, OrderData
-from vnpy.trader.utility import BarGenerator, ArrayManager
+#from vnpy.vnpy.trader.utility import BarGenerator, ArrayManager
 
 from .base import APP_NAME
 from .engine import StrategyEngine

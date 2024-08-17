@@ -20,12 +20,12 @@ from vnpy.trader.object import (
     OrderData,
     TradeData,
     BarData,
-    ContractData
+    ContractData, FactorData
 )
 from vnpy.trader.event import (
     EVENT_TICK,
     EVENT_ORDER,
-    EVENT_TRADE
+    EVENT_TRADE, EVENT_FACTOR
 )
 from vnpy.trader.constant import (
     Direction,
@@ -66,6 +66,7 @@ class StrategyEngine(BaseEngine):
         self.strategies: dict[str, StrategyTemplate] = {}
 
         self.symbol_strategy_map: dict[str, list[StrategyTemplate]] = defaultdict(list)
+        self.factor_strategy_map: dict[str, list[StrategyTemplate]] = defaultdict(list)
         self.orderid_strategy_map: dict[str, StrategyTemplate] = {}
 
         self.init_executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1)
@@ -83,7 +84,7 @@ class StrategyEngine(BaseEngine):
         self.load_strategy_setting()
         self.load_strategy_data()
         self.register_event()
-        self.write_log(_("组合策略引擎初始化成功"))
+        self.write_log("组合策略引擎初始化成功")
 
     def close(self) -> None:
         """关闭"""
@@ -94,6 +95,7 @@ class StrategyEngine(BaseEngine):
         self.event_engine.register(EVENT_TICK, self.process_tick_event)
         self.event_engine.register(EVENT_ORDER, self.process_order_event)
         self.event_engine.register(EVENT_TRADE, self.process_trade_event)
+        self.event_engine.register(EVENT_FACTOR, self.process_factor_event)
 
     def init_datafeed(self) -> None:
         """初始化数据服务"""
@@ -115,10 +117,18 @@ class StrategyEngine(BaseEngine):
         data: list[BarData] = self.datafeed.query_bar_history(req, self.write_log)
         return data
 
-    def query_latest_factor_from_database(self, symbol: str, exchange: Exchange) -> dict:
-        """通过数据库获取最新因子数据"""
-        data: dict = self.database.query_latest_factor_data(symbol, exchange)
-        return data
+    def process_factor_event(self, event: Event) -> None:
+        """因子数据推送"""
+        # todo 因子数据推送
+        factor: FactorData = event.data
+
+        strategies: list = self.factor_strategy_map[factor.factor_name]
+        if not strategies:
+            return
+
+        for strategy in strategies:
+            if strategy.inited:
+                self.call_strategy_func(strategy, strategy.on_factor, factor)
 
     def process_tick_event(self, event: Event) -> None:
         """行情数据推送"""
@@ -168,12 +178,13 @@ class StrategyEngine(BaseEngine):
         volume: float,
         lock: bool,
         net: bool,
-    ) -> list:
+    ) -> Optional[list]:
         """发送委托"""
         contract: Optional[ContractData] = self.main_engine.get_contract(vt_symbol)
         if not contract:
-            self.write_log(_("委托失败，找不到合约：{}").format(vt_symbol), strategy)
-            return ""
+            msg: str = f"委托失败，找不到合约{vt_symbol}"
+            self.write_log(msg, strategy)
+            return
 
         price: float = round_to(price, contract.pricetick)
         volume: float = round_to(volume, contract.min_volume)
@@ -217,7 +228,7 @@ class StrategyEngine(BaseEngine):
         """委托撤单"""
         order: Optional[OrderData] = self.main_engine.get_order(vt_orderid)
         if not order:
-            self.write_log(f"撤单失败，找不到委托{vt_orderid}", strategy)
+            self.write_log(f"撤单失败，找不到订单{vt_orderid}", strategy)
             return
 
         req: CancelRequest = order.create_cancel_request()
@@ -232,22 +243,24 @@ class StrategyEngine(BaseEngine):
         """获取引擎类型"""
         return self.engine_type
 
-    def get_pricetick(self, strategy: StrategyTemplate, vt_symbol: str) -> float:
+    def get_pricetick(self, strategy: StrategyTemplate, vt_symbol: str) -> Optional[float]:
         """获取合约价格跳动"""
         contract: Optional[ContractData] = self.main_engine.get_contract(vt_symbol)
 
         if contract:
             return contract.pricetick
         else:
+            self.write_log(f"获取合约{vt_symbol}失败", strategy)
             return None
 
-    def get_size(self, strategy: StrategyTemplate, vt_symbol: str) -> int:
+    def get_size(self, strategy: StrategyTemplate, vt_symbol: str) -> Optional[float]:
         """获取合约乘数"""
         contract: Optional[ContractData] = self.main_engine.get_contract(vt_symbol)
 
         if contract:
             return contract.size
         else:
+            self.write_log(f"获取合约{vt_symbol}失败", strategy)
             return None
 
     def load_bars(self, strategy: StrategyTemplate, days: int, interval: Interval) -> None:
@@ -340,7 +353,7 @@ class StrategyEngine(BaseEngine):
             strategy.trading = False
             strategy.inited = False
 
-            msg: str = _("触发异常已停止\n{}").format(traceback.format_exc())
+            msg: str = f"触发异常已停止\n{traceback.format_exc()}"
             self.write_log(msg, strategy)
 
     def add_strategy(
@@ -348,12 +361,14 @@ class StrategyEngine(BaseEngine):
     ) -> None:
         """添加策略实例"""
         if strategy_name in self.strategies:
-            self.write_log(_("创建策略失败，存在重名{}").format(strategy_name))
+            msg: str = f"创建策略失败，存在重名{strategy_name}"
+            self.write_log(msg)
             return
 
         strategy_class: Optional[StrategyTemplate] = self.classes.get(class_name, None)
         if not strategy_class:
-            self.write_log(_("创建策略失败，找不到策略类{}").format(class_name))
+            msg: str = f"创建策略失败，找不到策略类{class_name}"
+            self.write_log(msg)
             return
 
         strategy: StrategyTemplate = strategy_class(self, strategy_name, vt_symbols, setting)
@@ -361,6 +376,10 @@ class StrategyEngine(BaseEngine):
 
         for vt_symbol in vt_symbols:
             strategies: list = self.symbol_strategy_map[vt_symbol]
+            strategies.append(strategy)
+
+        for factor in strategy.factors:
+            strategies: list = self.factor_strategy_map[factor]
             strategies.append(strategy)
 
         self.save_strategy_setting()
@@ -428,21 +447,18 @@ class StrategyEngine(BaseEngine):
         # 调用策略on_start函数
         self.call_strategy_func(strategy, strategy.on_start)
 
-        # 推送策略事件通知启动完成状态
-        strategy.trading = True
         self.put_strategy_event(strategy)
 
     def stop_strategy(self, strategy_name: str) -> None:
         """停止策略"""
         strategy: StrategyTemplate = self.strategies[strategy_name]
         if not strategy.trading:
+            msg: str = f"策略{strategy_name}未启动, 无须停止"
+            self.write_log(msg, strategy)
             return
 
         # 调用策略on_stop函数
         self.call_strategy_func(strategy, strategy.on_stop)
-
-        # 将交易状态设为False
-        strategy.trading = False
 
         # 撤销全部委托
         self.cancel_all(strategy)
@@ -456,6 +472,7 @@ class StrategyEngine(BaseEngine):
     def edit_strategy(self, strategy_name: str, setting: dict) -> None:
         """编辑策略参数"""
         strategy: StrategyTemplate = self.strategies[strategy_name]
+        # update strategy parameters
         strategy.update_setting(setting)
 
         self.save_strategy_setting()
@@ -465,8 +482,9 @@ class StrategyEngine(BaseEngine):
         """移除策略实例"""
         strategy: StrategyTemplate = self.strategies[strategy_name]
         if strategy.trading:
-            self.write_log(_("策略{}移除失败，请先停止").format(strategy.strategy_name))
-            return
+            msg: str = f"策略{strategy_name}移除失败，请先停止"
+            self.write_log(msg, strategy)
+            return False
 
         for vt_symbol in strategy.vt_symbols:
             strategies: list = self.symbol_strategy_map[vt_symbol]
@@ -475,6 +493,10 @@ class StrategyEngine(BaseEngine):
         for vt_orderid in strategy.active_orderids:
             if vt_orderid in self.orderid_strategy_map:
                 self.orderid_strategy_map.pop(vt_orderid)
+
+        for factor in strategy.factors:
+            strategies: list = self.factor_strategy_map[factor]
+            strategies.remove(strategy)
 
         self.strategies.pop(strategy_name)
         self.save_strategy_setting()
@@ -581,7 +603,8 @@ class StrategyEngine(BaseEngine):
             strategy_setting[name] = {
                 "class_name": strategy.__class__.__name__,
                 "vt_symbols": strategy.vt_symbols,
-                "setting": strategy.get_parameters()
+                "setting": strategy.get_parameters(),
+                "factors": strategy.factors
             }
 
         save_json(self.setting_filename, strategy_setting)
@@ -609,3 +632,6 @@ class StrategyEngine(BaseEngine):
             subject: str = _("组合策略引擎")
 
         self.main_engine.send_email(subject, msg)
+
+    def get_tick(self, vt_symbol) -> TickData:
+        return self.main_engine.get_tick(vt_symbol)
