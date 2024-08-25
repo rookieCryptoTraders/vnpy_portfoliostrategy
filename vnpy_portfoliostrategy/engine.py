@@ -472,7 +472,7 @@ class StrategyEngine(BaseEngine):
     def edit_strategy(self, strategy_name: str, setting: dict) -> None:
         """编辑策略参数"""
         strategy: StrategyTemplate = self.strategies[strategy_name]
-        # update strategy parameters
+        # update strategies parameters
         strategy.update_setting(setting)
 
         self.save_strategy_setting()
