@@ -278,7 +278,7 @@ class BacktestingEngine:
             ]
             for key in fields:
                 value = getattr(daily_result, key)
-                results[key].append(value)
+                results[key].vstack_truncated(value)
 
         if results:
             self.daily_df: DataFrame = DataFrame.from_dict(results).set_index("date")
